@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { CATEGORIES, CONDITIONS, formatMoney, type Card } from "@/lib/cards";
-import { deleteCard, useCards, useIsClient } from "@/lib/store";
+import { addCards, deleteCard, useCards, useIsClient } from "@/lib/store";
 import { exportToExcel } from "@/lib/exportExcel";
+import { importFromExcel } from "@/lib/importExcel";
 import { CardForm } from "./CardForm";
 
 type SortKey = "newest" | "name" | "value-desc" | "value-asc" | "year-desc" | "year-asc";
@@ -31,6 +32,11 @@ export function CardVault() {
   const [editing, setEditing] = useState<Card | "new" | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<
+    { added: number; duplicates: number; errors: string[] } | { failed: string } | null
+  >(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -102,6 +108,23 @@ export function CardVault() {
     }
   }
 
+  async function handleImport(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again later
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importFromExcel(file, cards);
+      if (result.cards.length > 0) addCards(result.cards);
+      setImportResult({ added: result.cards.length, duplicates: result.duplicates, errors: result.errors });
+    } catch (err) {
+      setImportResult({ failed: err instanceof Error ? err.message : "Import failed." });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // Cards are read from browser storage, so render nothing until we're in the browser.
   if (!isClient) return <div className="h-96" aria-busy="true" />;
 
@@ -114,7 +137,22 @@ export function CardVault() {
             {isFiltered ? "Stats reflect the current filters." : "All cards in your vault."}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={handleImport}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={importing}
+            className="btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {importing ? "Importing…" : "⬆ Import from Excel"}
+          </button>
           <button
             type="button"
             onClick={handleExport}
@@ -198,12 +236,53 @@ export function CardVault() {
         </p>
       )}
 
+      {importResult && (
+        <div
+          className={`relative rounded-lg px-3 py-2 pr-8 text-sm ${
+            "failed" in importResult || (importResult.added === 0 && importResult.errors.length > 0)
+              ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+              : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setImportResult(null)}
+            className="absolute top-1.5 right-2 opacity-60 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+          {"failed" in importResult ? (
+            <p>Couldn&apos;t import: {importResult.failed}</p>
+          ) : (
+            <>
+              <p>
+                Imported {importResult.added} card{importResult.added === 1 ? "" : "s"}.
+                {importResult.duplicates > 0 &&
+                  ` Skipped ${importResult.duplicates} already in your vault.`}
+                {importResult.errors.length > 0 &&
+                  ` ${importResult.errors.length} row${importResult.errors.length === 1 ? "" : "s"} couldn't be imported:`}
+              </p>
+              {importResult.errors.length > 0 && (
+                <ul className="mt-1 max-h-40 list-disc overflow-y-auto pl-5 text-red-700 dark:text-red-300">
+                  {importResult.errors.map((e) => (
+                    <li key={e}>{e}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* Card list */}
       {cards.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
           <p className="text-4xl">🗃️</p>
           <p className="mt-3 font-medium">Your vault is empty</p>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Add your first card to start tracking your collection.</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Add your first card, or import a spreadsheet, to start tracking your collection.
+          </p>
           <button type="button" onClick={() => setEditing("new")} className="btn-primary mt-4">
             + Add your first card
           </button>

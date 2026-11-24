@@ -68,6 +68,18 @@ export function addCard(input: CardInput) {
   write([{ ...input, id: newId(), created_at: now, updated_at: now }, ...read()]);
 }
 
+/** Adds many cards in one save (used by Excel import). Keeps each card's original date added when known. */
+export function addCards(items: { data: CardInput; created_at?: string }[]) {
+  const now = new Date().toISOString();
+  const added = items.map(({ data, created_at }) => ({
+    ...data,
+    id: newId(),
+    created_at: created_at ?? now,
+    updated_at: now,
+  }));
+  write([...added, ...read()]);
+}
+
 export function updateCard(id: string, input: CardInput) {
   const now = new Date().toISOString();
   write(read().map((c) => (c.id === id ? { ...c, ...input, updated_at: now } : c)));
